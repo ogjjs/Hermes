@@ -63,7 +63,7 @@ def test_fechar_com_divergencia_aberta_recusa_e_nao_grava(conn, cfg):
         fechar_mes(conn, cfg, "2025-08")
     assert conn.execute("select count(*) n from relatorio.loja_mes").fetchone()["n"] == 0
     situacoes = conn.execute("select distinct situacao from hermes.mes_loja").fetchall()
-    assert situacoes == [{"situacao": "aberto"}]
+    assert situacoes == [{"situacao": "conferido"}]  # a recusa não fecha ninguém
 
 
 def test_fechar_sem_conferir_recusa(conn, cfg0):
@@ -198,3 +198,60 @@ def test_fechar_de_novo_refaz_igual(conn, cfg0):
     antes = [conn.execute(q).fetchall() for q in consultas]
     fechar_mes(conn, cfg0, "2025-08")
     assert [conn.execute(q).fetchall() for q in consultas] == antes
+
+
+def _somas(conn):
+    return conn.execute(
+        """select (select sum(lucro) from relatorio.titulo_mes) titulos,
+                  (select sum(ajuste_repasse) from relatorio.loja_mes) ajuste,
+                  (select sum(lucro) from relatorio.loja_mes) lojas,
+                  (select lucro from relatorio.mes) mes"""
+    ).fetchone()
+
+
+def test_repasse_aceito_vira_ajuste_e_os_lucros_batem(conn, cfg0):
+    arq, linhas, sep = _csv(cfg0)
+    loja = _loja_do_csv(linhas)
+    rotulo, valor = linhas[-1].split(sep, 1)
+    novo = Decimal(valor.replace(".", "").replace(",", ".") if sep == ";" else valor) + 5
+    linhas[-1] = sep.join([rotulo, texto_br(novo) if sep == ";" else texto_us(novo)])
+    _gravar(arq, linhas)
+    _importar_e_conferir(conn, cfg0)
+    _decidir_todas(conn, {"REPASSE_DIVERGENTE": "aceitar"})
+    fechar_mes(conn, cfg0, "2025-08")
+    f = conn.execute("select * from relatorio.loja_mes where loja_id = %s", (loja,)).fetchone()
+    assert f["ajuste_repasse"] == Decimal("5.00")
+    s = _somas(conn)
+    assert s["titulos"] + s["ajuste"] == s["lojas"] == s["mes"]
+
+
+def test_duplicado_aceito_vale_a_primeira_linha(conn, cfg0):
+    arq, linhas, sep = _csv(cfg0)
+    partes = linhas[2].split(sep)
+    repetida = partes[:3] + [str(int(partes[3]) + 3)] + partes[4:]
+    linhas.insert(3, sep.join(repetida))
+    _gravar(arq, linhas)
+    _importar_e_conferir(conn, cfg0)
+    _decidir_todas(conn, {"DUPLICADO": "aceitar"})
+    fechar_mes(conn, cfg0, "2025-08")
+    r = conn.execute(
+        "select s.* from conferido.saldo s join public.film f using (film_id) "
+        "where f.title = %s and s.loja_id = %s",
+        (partes[0], _loja_do_csv(linhas)),
+    ).fetchone()
+    assert r["vendido"] == int(partes[1]) and r["estoque_final_loja"] == int(partes[3])
+    assert r["estoque_final"] == int(partes[3])
+
+
+def test_estoque_negativo_recusa_o_fechamento_e_nao_grava(conn, cfg0):
+    arq, linhas, sep = _csv(cfg0)
+    partes = linhas[2].split(sep)
+    disponivel = int(partes[1]) + int(partes[2]) + int(partes[3])
+    partes[1], partes[2], partes[3] = str(disponivel + 3), "0", "0"
+    linhas[2] = sep.join(partes)
+    _gravar(arq, linhas)
+    _importar_e_conferir(conn, cfg0)
+    _decidir_todas(conn, {"SALDO_NAO_FECHA": "contestar", "REPASSE_DIVERGENTE": "contestar"})
+    with pytest.raises(ErroHermes, match="estoque negativo"):
+        fechar_mes(conn, cfg0, "2025-08")
+    assert conn.execute("select count(*) n from relatorio.loja_mes").fetchone()["n"] == 0

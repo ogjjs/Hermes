@@ -114,3 +114,16 @@ def test_conferir_duas_vezes_nao_duplica_nem_reabre(conn, cfg):
         "select count(*) n from hermes.divergencia where estado = 'aceita'"
     ).fetchone()["n"]
     assert decididas == 1
+
+
+def test_linha_ilegivel_vira_divergencia_propria(conn, cfg):
+    cfg, _ = _ciclo(conn, cfg, "0")
+    arq = _um_csv(cfg)
+    linhas = arq.read_text(encoding="utf-8").splitlines()
+    sep = ";" if ";" in linhas[1] else ","
+    partes = linhas[2].split(sep)
+    partes[1] = "abc"
+    linhas[2] = sep.join(partes)
+    arq.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    importar_mes(conn, cfg, "2025-08")
+    assert conferir_mes(conn, cfg, "2025-08") == {"LINHA_ILEGIVEL": 1}

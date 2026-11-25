@@ -16,8 +16,9 @@ def _brl(v) -> str:
 
 
 def _linha_do_mes(mes: str, r: dict) -> str:
+    aviso = "  (já fechado, não mexi)" if r.get("ja_fechado") else ""
     return (
-        f"{mes}  vendido {r['vendido']:>5}  venda {_brl(r['venda']):>15}  "
+        f"{mes}{aviso}  vendido {r['vendido']:>5}  venda {_brl(r['venda']):>15}  "
         f"lucro {_brl(r['lucro']):>14}  divergências {r['divergencias']:>3}"
     )
 
@@ -65,6 +66,10 @@ def _executar(a: argparse.Namespace) -> None:
         )
         for nome, motivo in r.com_erro:
             print(f"  {nome}: {motivo}")
+        if r.com_erro_de_linha:
+            print(f"{len(r.com_erro_de_linha)} lidos com linhas que não deu para ler:")
+            for nome, motivo in r.com_erro_de_linha:
+                print(f"  {nome}: {motivo}")
     elif a.comando == "conferir":
         contagem = ciclo_app.conferir(cfg, a.mes)
         print(f"{sum(contagem.values())} divergências em {a.mes}.")

@@ -17,9 +17,9 @@ from hermes.core.modelos import ErroInjetado, LinhaLoja, RelatorioLoja
 from hermes.core.sorteio import rng
 
 
-def _repasse(linhas: list[LinhaLoja]) -> Decimal:
+def _repasse(linhas: list[LinhaLoja], comissao: Decimal) -> Decimal:
     return sum(
-        (valores(x.vendido, x.preco, cp.COMISSAO, cp.CUSTO_PCT).repasse for x in linhas),
+        (valores(x.vendido, x.preco, comissao, Decimal("0")).repasse for x in linhas),
         start=Decimal("0.00"),
     )
 
@@ -42,14 +42,14 @@ def _aplicar(r: RelatorioLoja, codigo: str, g, catalogo: dict) -> int | None | b
         film_id = int(livres[int(g.integers(len(livres)))])
         titulo, preco = catalogo[film_id]
         r.linhas.append(LinhaLoja(film_id, titulo, 1, 0, 0, preco))
-        r.repasse = _repasse(r.linhas)
+        r.repasse = _repasse(r.linhas, r.comissao)
         return film_id
     if codigo == "TITULO_AUSENTE":
         com_estoque = [i for i, x in enumerate(r.linhas) if x.estoque_final > 0]
         if not com_estoque:
             return False
         x = r.linhas.pop(com_estoque[int(g.integers(len(com_estoque)))])
-        r.repasse = _repasse(r.linhas)
+        r.repasse = _repasse(r.linhas, r.comissao)
         return x.film_id
     if codigo == "REPASSE_DIVERGENTE":
         delta = centavos(Decimal(int(g.integers(500, 5001))) / 100)
@@ -60,7 +60,7 @@ def _aplicar(r: RelatorioLoja, codigo: str, g, catalogo: dict) -> int | None | b
         x = vendidas[int(g.integers(len(vendidas)))]
         outros = sorted(p for p in cp.FAIXAS_PRECO.values() if p != x.preco)
         x.preco = outros[int(g.integers(len(outros)))]
-        r.repasse = _repasse(r.linhas)
+        r.repasse = _repasse(r.linhas, r.comissao)
         return x.film_id
     if codigo == "DUPLICADO":
         x = r.linhas[int(g.integers(len(r.linhas)))]

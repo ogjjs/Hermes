@@ -1,4 +1,5 @@
 import json
+import time
 import unicodedata
 from datetime import date
 from decimal import Decimal
@@ -135,12 +136,12 @@ def test_arquivo_tem_codigo_da_loja_e_apelidos_do_mapeamento(conn, cfg):
     assert len(salvo) == len(gabarito)
 
 
-def test_mesma_semente_mesmos_arquivos(conn, cfg):
+def test_mesma_semente_mesmos_bytes_em_todos_os_formatos(conn, cfg):
     _preparado(conn, cfg)
     simular_mes(conn, cfg, "2025-08")
     pasta = cfg.pasta_entrada / "2025-08"
-    antes = {p.name: _texto_do_arquivo(p) for p in pasta.iterdir()}
-    bytes_csv = {p.name: p.read_bytes() for p in pasta.glob("*.csv")}
+    antes = {p.name: p.read_bytes() for p in pasta.iterdir()}
+    assert {p.suffix for p in pasta.iterdir()} >= {".csv", ".xlsx", ".pdf"}
+    time.sleep(2.1)  # o zip guarda a hora de 2 em 2 s: sem esperar, o teste passaria à toa
     simular_mes(conn, cfg, "2025-08")
-    assert {p.name: _texto_do_arquivo(p) for p in pasta.iterdir()} == antes
-    assert {p.name: p.read_bytes() for p in pasta.glob("*.csv")} == bytes_csv
+    assert {p.name: p.read_bytes() for p in pasta.iterdir()} == antes

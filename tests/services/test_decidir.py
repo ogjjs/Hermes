@@ -59,16 +59,29 @@ def test_automatico_segue_a_regra(conn, cfg):
         _divergencia(conn, "SALDO_NAO_FECHA", 5, 2, film_id=3): "contestada",
         _divergencia(conn, "REPASSE_DIVERGENTE", 110, 100): "aceita",
         _divergencia(conn, "REPASSE_DIVERGENTE", 120, 100, loja_id=11): "contestada",
-        _divergencia(conn, "PRECO_DIVERGENTE", 39.9, 29.9, film_id=4): "contestada",
-        _divergencia(conn, "TITULO_NAO_ENVIADO", 1, None, film_id=5): "contestada",
+        _divergencia(conn, "PRECO_DIVERGENTE", 39.9, 29.9, film_id=4, loja_id=11): "contestada",
+        _divergencia(conn, "TITULO_NAO_ENVIADO", 1, None, film_id=5, loja_id=11): "contestada",
         _divergencia(conn, "DUPLICADO", 2, None, film_id=6): "contestada",
         _divergencia(conn, "RELATORIO_FALTANDO"): "contestada",
+        _divergencia(conn, "LINHA_ILEGIVEL", None, 2, film_id=7): "contestada",
     }
     contagem = decidir_automatico(conn, "2025-08")
-    assert contagem == {"aceita": 4, "contestada": 6}
+    assert contagem == {"aceita": 4, "contestada": 7}
     for d, estado in casos.items():
         r = conn.execute(
             "select estado, motivo from hermes.divergencia where divergencia_id = %s", (d,)
         ).fetchone()
         assert r["estado"] == estado and r["motivo"].startswith("automático: ")
     assert decidir_automatico(conn, "2025-08") == {}
+
+
+def test_automatico_contesta_o_repasse_que_segue_um_preco_contestado(conn, cfg):
+    preparar(conn, cfg)
+    preco = _divergencia(conn, "PRECO_DIVERGENTE", 39.9, 29.9, film_id=4)
+    repasse = _divergencia(conn, "REPASSE_DIVERGENTE", 107, 100)
+    decidir_automatico(conn, "2025-08")
+    estados = {
+        r["divergencia_id"]: r["estado"]
+        for r in conn.execute("select divergencia_id, estado from hermes.divergencia")
+    }
+    assert estados == {preco: "contestada", repasse: "contestada"}

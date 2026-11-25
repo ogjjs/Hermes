@@ -32,7 +32,8 @@ def estoque_inicial(conn: psycopg.Connection, loja_id: int, mes: str) -> dict[in
 def _exigir_mes_anterior_fechado(conn: psycopg.Connection, mes: str) -> None:
     anterior = mes_anterior(mes)
     r = conn.execute(
-        "select count(*) total, count(*) filter (where situacao <> 'aberto') prontos "
+        "select count(*) total, "
+        "count(*) filter (where situacao in ('fechado', 'sem_relatorio')) prontos "
         "from hermes.mes_loja where mes = %s",
         (anterior,),
     ).fetchone()
@@ -62,11 +63,11 @@ def emitir_mes(conn: psycopg.Connection, cfg: Config, mes: str) -> list[int]:
             """select s.film_id, f.title as titulo, s.estoque_alvo, p.preco
                  from hermes.sortimento s
                  join public.film f using (film_id)
-                 join hermes.contrato c on c.loja_id = s.loja_id
+                 join hermes.contrato_do_mes(%s) c on c.loja_id = s.loja_id
                  join hermes.preco p on p.contrato_id = c.contrato_id
                                     and p.rental_rate = f.rental_rate
                 where s.loja_id = %s order by s.film_id""",
-            (loja["loja_id"],),
+            (mes, loja["loja_id"]),
         ):
             quantidade = s["estoque_alvo"] - estoque.get(s["film_id"], 0)
             if quantidade > 0:

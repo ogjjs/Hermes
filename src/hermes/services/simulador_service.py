@@ -28,8 +28,8 @@ def simular_vendas(conn: psycopg.Connection, cfg: Config, mes: str) -> list[Rela
     pop = popularidade(conn)
     lojas = conn.execute(
         "select m.loja_id, c.comissao, c.custo_pct from hermes.mes_loja m "
-        "join hermes.contrato c using (loja_id) where m.mes = %s order by 1",
-        (mes,),
+        "join hermes.contrato_do_mes(%s) c using (loja_id) where m.mes = %s order by 1",
+        (mes, mes),
     ).fetchall()
     relatorios = []
     for loja in lojas:
@@ -49,11 +49,11 @@ def simular_vendas(conn: psycopg.Connection, cfg: Config, mes: str) -> list[Rela
             for r in conn.execute(
                 """select f.film_id, f.title, p.preco
                      from public.film f
-                     join hermes.contrato c on c.loja_id = %s
+                     join hermes.contrato_do_mes(%s) c on c.loja_id = %s
                      join hermes.preco p on p.contrato_id = c.contrato_id
                                         and p.rental_rate = f.rental_rate
                     where f.film_id = any(%s)""",
-                (loja["loja_id"], titulos),
+                (mes, loja["loja_id"], titulos),
             )
         }
         linhas = []
@@ -81,7 +81,14 @@ def simular_vendas(conn: psycopg.Connection, cfg: Config, mes: str) -> list[Rela
         )
         dia_chegada = int(g.integers(1, cp.DIA_LIMITE_RELATORIO + 1))
         relatorios.append(
-            RelatorioLoja(loja["loja_id"], mes, linhas, repasse, dia(proximo_mes(mes), dia_chegada))
+            RelatorioLoja(
+                loja["loja_id"],
+                mes,
+                linhas,
+                repasse,
+                dia(proximo_mes(mes), dia_chegada),
+                loja["comissao"],
+            )
         )
     return relatorios
 

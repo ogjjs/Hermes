@@ -24,6 +24,7 @@ class RelatorioLoja:
     linhas: list[LinhaLoja]
     repasse: Decimal
     recebido_em: date
+    comissao: Decimal  # do contrato do mês: a loja calcula o próprio repasse com ela
 
 
 @dataclass(frozen=True)
@@ -47,4 +48,5 @@ class ResumoImportacao:
     lidos: int = 0
     ignorados_repetidos: int = 0
     substituidos: int = 0
-    com_erro: list[tuple[str, str]] = field(default_factory=list)
+    com_erro: list[tuple[str, str]] = field(default_factory=list)  # arquivo não lido
+    com_erro_de_linha: list[tuple[str, str]] = field(default_factory=list)  # lido em parte

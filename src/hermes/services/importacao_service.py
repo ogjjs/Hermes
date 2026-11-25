@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 from datetime import date
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 
@@ -16,7 +17,7 @@ import psycopg
 from hermes.config.settings import Config
 from hermes.core.dinheiro import ler_valor
 from hermes.core.erros import ErroHermes
-from hermes.core.meses import validar_mes
+from hermes.core.meses import proximo_mes, validar_mes
 from hermes.core.modelos import LeituraArquivo, ResumoImportacao
 from hermes.core.normalizacao import normalizar_titulo
 from hermes.domain.relatorio_loja import interpretar
@@ -24,6 +25,12 @@ from hermes.infra import leitores
 from hermes.infra.db import executar_sql
 
 _INTEIROS = ("vendido", "devolvido", "estoque_final")
+# Maiores valores que cabem nas colunas do banco (int e numeric(10,2) / numeric(12,2))
+_MAXIMO = {
+    "inteiro": 2_147_483_647,
+    "preco": Decimal("99999999.99"),
+    "repasse": Decimal("9999999999.99"),
+}
 
 
 def ler_arquivo(caminho: Path) -> LeituraArquivo:
@@ -69,9 +76,11 @@ def _valores(linha: dict[str, str], mapeamento: dict[str, str], numero: int, err
             if v is None:
                 raise ValueError
             if campo in _INTEIROS:
-                if v != v.to_integral_value() or v < 0:
+                if v != v.to_integral_value() or v < 0 or v > _MAXIMO["inteiro"]:
                     raise ValueError
                 v = int(v)
+            elif v < 0 or v > _MAXIMO["preco"]:
+                raise ValueError
             valores[campo] = str(v)
         except (ValueError, ArithmeticError):
             erros.append(f"linha {numero}: {campo} inválido ({texto!r})")
@@ -83,6 +92,8 @@ def _gravar_leitura(conn, arquivo_id: int, leitura: LeituraArquivo, mapeamento: 
     try:
         repasse = ler_valor(leitura.repasse)
     except ValueError:
+        repasse = None
+    if repasse is not None and abs(repasse) > _MAXIMO["repasse"]:
         repasse = None
     if repasse is None:
         erros.append(f"repasse inválido ({leitura.repasse!r})")
@@ -107,20 +118,41 @@ def _gravar_leitura(conn, arquivo_id: int, leitura: LeituraArquivo, mapeamento: 
     return erros
 
 
-def _substituir_anterior(conn, loja_id: int, mes: str) -> bool:
+def _exigir_mes_aberto(conn, loja_id: int, mes: str) -> None:
+    """Recusa (antes de gravar qualquer coisa) o arquivo que não pode entrar no mês."""
+    r = conn.execute(
+        "select situacao from hermes.mes_loja where loja_id = %s and mes = %s", (loja_id, mes)
+    ).fetchone()
+    if r is None:
+        raise ErroHermes(f"a loja {loja_id} não tem remessa em {mes}")
+    seguinte = proximo_mes(mes)
+    if (
+        r["situacao"] in ("fechado", "sem_relatorio")
+        and conn.execute(
+            "select 1 from hermes.mes_loja where mes = %s limit 1", (seguinte,)
+        ).fetchone()
+    ):
+        raise ErroHermes(
+            f"{mes} já está fechado e {seguinte} já foi emitido a partir dele: "
+            "o arquivo não pode reabrir o mês"
+        )
+
+
+def _reabrir(conn, loja_id: int, mes: str) -> bool:
+    """O arquivo novo passa a valer: o anterior (se houver) fica substituído, as divergências
+    da loja no mês são apagadas (inclusive RELATORIO_FALTANDO) e o mês volta a 'importado',
+    para ser conferido de novo. Devolve se havia arquivo anterior."""
     anterior = conn.execute(
         "update hermes.arquivo set substituido = true where loja_id = %s and mes = %s "
         "and not substituido and leitor is not null returning arquivo_id",
         (loja_id, mes),
     ).fetchall()
-    if not anterior:
-        return False
     conn.execute("delete from hermes.divergencia where loja_id = %s and mes = %s", (loja_id, mes))
     conn.execute(
-        "update hermes.mes_loja set situacao = 'aberto' where loja_id = %s and mes = %s",
+        "update hermes.mes_loja set situacao = 'importado' where loja_id = %s and mes = %s",
         (loja_id, mes),
     )
-    return True
+    return bool(anterior)
 
 
 def importar_mes(conn: psycopg.Connection, cfg: Config, mes: str) -> ResumoImportacao:
@@ -145,6 +177,7 @@ def importar_mes(conn: psycopg.Connection, cfg: Config, mes: str) -> ResumoImpor
             faltam = [c for c in mapa.values() if c not in leitura.linhas[0]]
             if faltam:
                 raise ErroHermes(f"colunas que faltam: {', '.join(faltam)}")
+            _exigir_mes_aberto(conn, leitura.loja_id, mes)
         except ErroHermes as e:
             conn.execute(
                 "insert into hermes.arquivo (mes, nome, sha256, recebido_em, erro) "
@@ -153,7 +186,7 @@ def importar_mes(conn: psycopg.Connection, cfg: Config, mes: str) -> ResumoImpor
             )
             resumo.com_erro.append((arq.name, str(e)))
             continue
-        if _substituir_anterior(conn, leitura.loja_id, mes):
+        if _reabrir(conn, leitura.loja_id, mes):
             resumo.substituidos += 1
         arquivo_id = conn.execute(
             "insert into hermes.arquivo (loja_id, mes, nome, sha256, recebido_em, leitor) "
@@ -166,6 +199,7 @@ def importar_mes(conn: psycopg.Connection, cfg: Config, mes: str) -> ResumoImpor
                 "update hermes.arquivo set erro = %s where arquivo_id = %s",
                 ("; ".join(erros), arquivo_id),
             )
+            resumo.com_erro_de_linha.append((arq.name, "; ".join(erros)))
         resumo.lidos += 1
     executar_sql(conn, "padronizar.sql", {"mes": mes})
     conn.commit()

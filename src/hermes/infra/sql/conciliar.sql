@@ -1,11 +1,11 @@
--- Conciliação do mês: conferido.saldo e hermes.divergencia, só das lojas com o mês aberto.
+-- Conciliação do mês: conferido.saldo e hermes.divergencia, só das lojas ainda não fechadas.
 -- Regra central, por loja, título e mês:
 --     estoque_inicial + recebido = vendido + devolvido + estoque_final
 
 create temp table _lojas on commit drop as
 select m.loja_id, c.comissao
-  from hermes.mes_loja m join hermes.contrato c using (loja_id)
- where m.mes = %(mes)s and m.situacao = 'aberto';
+  from hermes.mes_loja m join hermes.contrato_do_mes(%(mes)s) c using (loja_id)
+ where m.mes = %(mes)s and m.situacao in ('aberto', 'importado', 'conferido');
 
 -- arquivo ativo de cada loja no mês
 create temp table _arquivo on commit drop as
@@ -33,7 +33,7 @@ select s.loja_id, s.film_id, s.estoque_final as quantidade
 
 create temp table _preco on commit drop as
 select c.loja_id, f.film_id, p.preco
-  from hermes.contrato c
+  from hermes.contrato_do_mes(%(mes)s) c
   join hermes.preco p using (contrato_id)
   join public.film f on f.rental_rate = p.rental_rate
   join _lojas l on l.loja_id = c.loja_id;
@@ -64,10 +64,29 @@ select loja_id, %(mes)s, film_id, 'SALDO_NAO_FECHA', estoque_final_loja, estoque
  where mes = %(mes)s and estoque_final_loja is not null and estoque_final_loja <> estoque_final
 on conflict do nothing;
 
+-- linha que a loja mandou mas não deu para ler (número inválido): não é "título ausente"
+create temp table _ilegivel on commit drop as
+select a.loja_id, f.film_id
+  from bruto.linha b
+  join _arquivo a using (arquivo_id)
+  left join public.film f
+         on hermes.normalizar(f.title) = hermes.normalizar(b.conteudo -> '_valores' ->> 'titulo')
+ where b.numero > 0
+   and not (b.conteudo -> '_valores' ?& array['vendido', 'devolvido', 'estoque_final']);
+
+insert into hermes.divergencia (loja_id, mes, film_id, codigo, valor_calculado)
+select i.loja_id, %(mes)s, i.film_id, 'LINHA_ILEGIVEL', s.estoque_inicial + s.recebido
+  from _ilegivel i
+  left join conferido.saldo s
+         on s.loja_id = i.loja_id and s.mes = %(mes)s and s.film_id = i.film_id
+on conflict do nothing;
+
 insert into hermes.divergencia (loja_id, mes, film_id, codigo, valor_calculado)
 select s.loja_id, %(mes)s, s.film_id, 'TITULO_AUSENTE', s.estoque_inicial + s.recebido
   from conferido.saldo s join _arquivo a using (loja_id)
  where s.mes = %(mes)s and s.estoque_final_loja is null and s.estoque_inicial + s.recebido > 0
+   and not exists (select 1 from _ilegivel i
+                    where i.loja_id = s.loja_id and i.film_id = s.film_id)
 on conflict do nothing;
 
 insert into hermes.divergencia (loja_id, mes, film_id, codigo, valor_loja)
@@ -119,3 +138,7 @@ select l.loja_id, %(mes)s, 'RELATORIO_FALTANDO'
   from _lojas l
  where not exists (select 1 from _arquivo a where a.loja_id = l.loja_id)
 on conflict do nothing;
+
+update hermes.mes_loja m set situacao = 'conferido'
+  from _lojas l
+ where m.loja_id = l.loja_id and m.mes = %(mes)s;

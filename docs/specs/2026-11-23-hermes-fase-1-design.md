@@ -62,7 +62,9 @@ Cada loja parceira tem **um contrato**, com:
 - **frete embutido** no contrato: não aparece como linha nem como despesa separada.
 
 Os valores ficam numa tabela de contratos (com vigência), não no código, para a fase 3 poder simular
-outro contrato.
+outro contrato. Vale, em cada mês, o contrato vigente no primeiro dia do mês
+(`hermes.contrato_do_mes`), e uma loja não pode ter dois contratos valendo no mesmo dia.
+*(Revisão de 25/11/2026.)*
 
 ### Consignação, mês a mês
 1. No início do mês a distribuidora **emite uma remessa** (nota fiscal fictícia) para cada loja:
@@ -100,10 +102,18 @@ zero.
 | `RELATORIO_ATRASADO` | chegou depois do dia 10 |
 | `RELATORIO_FALTANDO` | loja com remessa no mês e sem relatório até o fechamento |
 | `DUPLICADO` | mesmo título duas vezes no relatório |
+| `LINHA_ILEGIVEL` | linha que a loja mandou com número que não dá para ler (só da conferência, o simulador não injeta) |
 
 Cada divergência nasce **aberta** e é decidida como **aceita** (vale o que a loja disse) ou
 **contestada** (vale o que a distribuidora calculou), com motivo. É o equivalente da conferência de
 pagamento: o mês de uma loja só fecha sem divergência aberta.
+
+### Estado de cada loja no mês *(revisão de 25/11/2026)*
+`aberto` (remessa emitida) → `importado` (relatório lido) → `conferido` → `fechado` ou
+`sem_relatorio`. Cada comando exige o passo anterior: só se fecha o que foi conferido. Um arquivo
+novo (reenvio, ou o relatório que chega depois de a loja fechar sem relatório) apaga as
+divergências da loja no mês e a devolve a `importado`, para ser conferida de novo; mas é recusado
+se o mês seguinte já foi emitido a partir daquele estoque.
 
 O que cada decisão faz com os números (decisão do desenho):
 - **Saldo que não fecha, aceito:** vale o estoque final que a loja disse; a diferença vira um
@@ -111,8 +121,15 @@ O que cada decisão faz com os números (decisão do desenho):
 - **Saldo que não fecha, contestado:** vendido e devolvido declarados valem, e o estoque final passa
   a ser o calculado pela equação; a diferença é **cobrada da loja a preço de custo**.
 - **Repasse ou preço divergente:** aceito, vale o valor da loja; contestado, vale o do contrato.
+  O repasse aceito que difere do calculado fica numa coluna à parte (`ajuste_repasse`), para o
+  lucro por título mais os ajustes somar o lucro das lojas.
 - **Título não enviado:** contestado, a linha é descartada; aceito, entra como venda de título
   avulso (raro, mas possível).
+- **Duplicado:** vale a primeira linha, aceito ou contestado; somar linhas somaria estoque, que é
+  posição e não movimento. A decisão fica como registro. *(Revisão de 25/11/2026: antes, aceito
+  somava as linhas.)*
+- **Linha ilegível:** o título conta sem movimento no mês até a loja reenviar; a regra automática
+  contesta, para alguém conferir.
 - **Relatório faltando:** a loja fecha o mês **sem relatório**, sem venda, e o estoque passa igual
   para o mês seguinte. Se o relatório chegar depois, ele reabre o mês dela.
 - **Devolução:** a distribuidora confia na quantidade devolvida que o relatório informa (não há
@@ -166,6 +183,8 @@ Um só repositório, com o papel de cada sistema original como módulo:
 - Ficam numa pasta de entrada (`entrada/<AAAA-MM>/`), com nome livre, como chegariam por e-mail.
 - **Importar o mesmo arquivo duas vezes não duplica nada** (identificado pelo sha256). Um arquivo
   novo da mesma loja e mês **substitui** o anterior e reabre a conciliação daquela loja e mês.
+- A mesma semente gera os **mesmos bytes** em CSV, Excel e PDF, então simular de novo um mês já
+  importado não gera arquivo "novo" nem reabre nada.
 
 ### Erros que o simulador injeta
 Em proporção configurável (padrão: cerca de 1 em cada 5 relatórios com algum erro): conta que não

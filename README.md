@@ -46,8 +46,14 @@ grava em `bruto`; as passagens seguintes são SQL versionado em
 - **Leitura de PDF em duas tentativas:** primeiro PyMuPDF; se a leitura falhar (sem cabeçalho, sem
   linhas ou com colunas a mais), pdfplumber. O banco guarda qual dos dois leu cada arquivo.
 - **Reproduzível:** a mesma semente gera os mesmos arquivos e o mesmo fechamento.
-- **Idempotente:** importar o mesmo arquivo de novo não duplica nada; um arquivo novo da mesma loja
-  e mês substitui o anterior e reabre a conferência.
+- **Idempotente:** importar o mesmo arquivo de novo não duplica nada, e `rodar` pula o mês que já
+  fechou.
+- **Estado por loja e mês:** emitido → importado → conferido → fechado. Um reenvio (ou o relatório
+  que chega atrasado) reabre só aquela loja, que precisa ser conferida de novo antes de fechar, e
+  é recusado se o mês seguinte já saiu a partir daquele estoque.
+- **Contas conferidas no fechamento:** estoque negativo, saldo que não fecha ou lucro por título
+  que não bate com o das lojas fazem o fechamento ser recusado, sem gravar nada.
+- **Contrato com vigência:** cada mês usa o contrato vigente da loja.
 - **Gabarito:** o simulador anota cada erro que pôs, e os testes provam que a conciliação acha
   todos.
 
@@ -65,8 +71,9 @@ Exemplos reais de `hermes rodar 2025-08 2026-07`:
 | `DUPLICADO` | loja 235 escreveu BEACH HEARTBREAKERS duas vezes | contestada: vale a primeira linha |
 | `RELATORIO_ATRASADO` | loja 51 mandou depois do dia 10 | aceita |
 | `RELATORIO_FALTANDO` | loja 219 não mandou o de 10/2025 | o mês fecha sem venda e o estoque passa igual |
+| `LINHA_ILEGIVEL` | uma linha com "abc" em vez da quantidade vendida | contestada: conferir com a loja |
 
-Nos 12 meses: 74 divergências (48 contestadas, 26 aceitas), 283 arquivos lidos (83 PDFs, todos na
+Nos 12 meses: 74 divergências (49 contestadas, 25 aceitas), 283 arquivos lidos (83 PDFs, todos na
 primeira tentativa), venda de R$ 1,53 milhão e lucro de R$ 459 mil.
 
 ## Arquitetura
@@ -115,7 +122,7 @@ Testes (criam um banco `hermes_teste` com o Pagila; precisam de `PAGILA_SQL_DIR`
 mensagem\Scripts\pytest --cov=hermes
 ```
 
-98 testes, 97% de cobertura.
+118 testes, 97% de cobertura.
 
 ## Fases
 

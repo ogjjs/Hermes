@@ -136,3 +136,32 @@ def test_linha_com_numero_invalido_vira_erro_de_linha(conn, mes_sem_erro):
         "select count(*) n from padronizado.venda where arquivo_id = %s", (a["arquivo_id"],)
     ).fetchone()["n"]
     assert n == len(linhas) - 4  # título, cabeçalho, repasse e a linha inválida ficam de fora
+
+
+def test_numero_fora_do_intervalo_vira_erro_de_linha(conn, mes_sem_erro):
+    csv = next(p for p in _arquivos(mes_sem_erro) if p.suffix == ".csv")
+    linhas = csv.read_text(encoding="utf-8").splitlines()
+    sep = ";" if ";" in linhas[1] else ","
+    for i, coluna, valor in ((2, 1, "99999999999"), (3, 4, "1e20")):
+        partes = linhas[i].split(sep)
+        partes[coluna] = valor
+        linhas[i] = sep.join(partes)
+    csv.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    r = importar_mes(conn, mes_sem_erro, "2025-08")
+    assert r.lidos == 24
+    erro = conn.execute("select erro from hermes.arquivo where nome = %s", (csv.name,))
+    erro = erro.fetchone()["erro"]
+    assert "linha 1: vendido" in erro and "linha 2: preco" in erro
+
+
+def test_erros_de_linha_aparecem_no_resumo(conn, mes_sem_erro):
+    csv = next(p for p in _arquivos(mes_sem_erro) if p.suffix == ".csv")
+    linhas = csv.read_text(encoding="utf-8").splitlines()
+    sep = ";" if ";" in linhas[1] else ","
+    partes = linhas[2].split(sep)
+    partes[1] = "abc"
+    linhas[2] = sep.join(partes)
+    csv.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    r = importar_mes(conn, mes_sem_erro, "2025-08")
+    assert r.com_erro == []
+    assert r.com_erro_de_linha == [(csv.name, "linha 1: vendido inválido ('abc')")]

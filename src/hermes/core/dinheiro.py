@@ -34,9 +34,12 @@ def ler_valor(texto: str | int | float | Decimal | None) -> Decimal | None:
     elif s.count(".") > 1:
         s = s.replace(".", "")
     try:
-        return Decimal(s)
+        v = Decimal(s)
     except InvalidOperation:
         raise ValueError(f"Número inválido: {texto!r}") from None
+    if not v.is_finite():
+        raise ValueError(f"Número inválido: {texto!r}")
+    return v
 
 
 def texto_br(v: Decimal) -> str:

@@ -45,6 +45,8 @@ def _regra(d: dict) -> tuple[str, str]:
     codigo = d["codigo"]
     if codigo == "RELATORIO_ATRASADO":
         return "aceitar", "atraso não muda os números"
+    if codigo == "LINHA_ILEGIVEL":
+        return "contestar", "linha ilegível: conferir com a loja e pedir o reenvio"
     if codigo == "TITULO_AUSENTE":
         return "aceitar", "título sem movimento no mês"
     if codigo == "SALDO_NAO_FECHA":
@@ -64,13 +66,25 @@ def decidir_automatico(conn: psycopg.Connection, mes: str) -> dict[str, int]:
     """Decide todas as divergências abertas do mês pela regra acima. Devolve quantas ficaram
     em cada estado nesta rodada."""
     contagem: dict[str, int] = {}
+    # o repasse por último: ele depende do que se decidiu sobre preço e títulos da loja
     abertas = conn.execute(
         "select * from hermes.divergencia where mes = %s and estado = 'aberta' "
-        "order by divergencia_id",
+        "order by codigo = 'REPASSE_DIVERGENTE', divergencia_id",
         (mes,),
     ).fetchall()
     for d in abertas:
         acao, regra = _regra(d)
+        if (
+            d["codigo"] == "REPASSE_DIVERGENTE"
+            and acao == "aceitar"
+            and conn.execute(
+                "select 1 from hermes.divergencia where loja_id = %s and mes = %s "
+                "and estado = 'contestada' "
+                "and codigo in ('PRECO_DIVERGENTE', 'TITULO_NAO_ENVIADO')",
+                (d["loja_id"], mes),
+            ).fetchone()
+        ):
+            acao, regra = "contestar", "o repasse segue um preço ou título contestado"
         conn.execute(
             "update hermes.divergencia set estado = %s, motivo = %s, decidida_em = now() "
             "where divergencia_id = %s",

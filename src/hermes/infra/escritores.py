@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import io
+import re
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +18,8 @@ from hermes.infra.pdf import gerar_pdf_tabela
 EXTENSAO = {"csv_ponto_virgula": ".csv", "csv_virgula": ".csv", "xlsx": ".xlsx", "pdf": ".pdf"}
 _CAMPOS = ("titulo", "vendido", "devolvido", "estoque_final", "preco")
 _DATA_FIXA = datetime(2026, 1, 1)  # o .xlsx não leva a hora em que foi gerado
+_DATA_ZIP = (2026, 1, 1, 0, 0, 0)
+_DATA_CORE = re.compile(rb"(<dcterms:(?:created|modified)[^>]*>)[^<]*(</dcterms:)")
 
 
 def titulo_do_relatorio(r: RelatorioLoja, cidade: str) -> str:
@@ -57,6 +61,23 @@ def _xlsx(r: RelatorioLoja, loja: dict, destino: Path) -> None:
         ws.cell(row=fim, column=2, value=float(r.repasse))
         escritor.book.properties.created = _DATA_FIXA
         escritor.book.properties.modified = _DATA_FIXA
+    _zip_sem_hora(destino)
+
+
+def _zip_sem_hora(destino: Path) -> None:
+    """O openpyxl grava a hora de agora no zip e no docProps/core.xml; aqui as duas ficam
+    fixas, para a mesma semente dar o mesmo arquivo, byte a byte (e o mesmo sha256)."""
+    with zipfile.ZipFile(destino) as origem:
+        partes = [(i.filename, origem.read(i)) for i in origem.infolist()]
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as novo:
+        for nome, conteudo in partes:
+            if nome == "docProps/core.xml":
+                conteudo = _DATA_CORE.sub(rb"\g<1>2026-01-01T00:00:00Z\g<2>", conteudo)
+            novo.writestr(
+                zipfile.ZipInfo(nome, date_time=_DATA_ZIP),
+                conteudo,
+                compress_type=zipfile.ZIP_DEFLATED,
+            )
 
 
 def _pdf(r: RelatorioLoja, loja: dict, destino: Path) -> None:

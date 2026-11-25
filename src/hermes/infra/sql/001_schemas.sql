@@ -19,6 +19,9 @@ create table if not exists hermes.loja (
     mapeamento  jsonb not null
 );
 
+-- no schema hermes, para não tocar no public do Pagila
+create extension if not exists btree_gist with schema hermes;
+
 create table if not exists hermes.contrato (
     contrato_id     serial primary key,
     loja_id         int not null references hermes.loja,
@@ -26,8 +29,19 @@ create table if not exists hermes.contrato (
     vigencia_fim    date,
     comissao        numeric(5,4) not null,
     custo_pct       numeric(5,4) not null,
-    unique (loja_id, vigencia_inicio)
+    unique (loja_id, vigencia_inicio),
+    -- uma loja não pode ter dois contratos valendo no mesmo dia
+    exclude using gist (loja_id with =,
+                        daterange(vigencia_inicio, vigencia_fim, '[]') with &&)
 );
+
+-- O contrato que vale em cada loja no mês AAAA-MM (o do primeiro dia do mês)
+create or replace function hermes.contrato_do_mes(p_mes text) returns setof hermes.contrato
+language sql stable as $$
+    select * from hermes.contrato
+     where vigencia_inicio <= to_date(p_mes || '-01', 'YYYY-MM-DD')
+       and (vigencia_fim is null or vigencia_fim >= to_date(p_mes || '-01', 'YYYY-MM-DD'))
+$$;
 
 create table if not exists hermes.preco (
     contrato_id int not null references hermes.contrato,
@@ -90,7 +104,9 @@ create table if not exists hermes.divergencia (
 create table if not exists hermes.mes_loja (
     loja_id  int not null references hermes.loja,
     mes      char(7) not null,
-    situacao text not null check (situacao in ('aberto', 'fechado', 'sem_relatorio')),
+    -- aberto (emitido) -> importado -> conferido -> fechado | sem_relatorio
+    situacao text not null check (situacao in ('aberto', 'importado', 'conferido', 'fechado',
+                                               'sem_relatorio')),
     primary key (loja_id, mes)
 );
 
@@ -153,6 +169,7 @@ create table if not exists relatorio.loja_mes (
     lucro           numeric(12,2) not null,
     cobranca_saldo  numeric(12,2) not null,
     ajuste_unidades int not null,
+    ajuste_repasse  numeric(12,2) not null default 0,  -- repasse aceito - calculado
     primary key (loja_id, mes)
 );
 
@@ -181,5 +198,6 @@ create table if not exists relatorio.mes (
     custo               numeric(12,2) not null,
     lucro               numeric(12,2) not null,
     cobranca_saldo      numeric(12,2) not null,
-    sell_through        numeric(5,4)
+    sell_through        numeric(5,4),
+    ajuste_repasse      numeric(12,2) not null default 0
 );

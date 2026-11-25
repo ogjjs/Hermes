@@ -51,7 +51,7 @@ def test_ler_valor(texto, esperado):
     assert ler_valor(texto) == (None if esperado is None else Decimal(esperado))
 
 
-@pytest.mark.parametrize("texto", ["abc", "12a", "1,2,3"])
+@pytest.mark.parametrize("texto", ["abc", "12a", "1,2,3", "inf", "-inf", "nan", "NaN"])
 def test_ler_valor_texto_invalido(texto):
     with pytest.raises(ValueError):
         ler_valor(texto)

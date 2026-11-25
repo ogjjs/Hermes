@@ -67,12 +67,18 @@ def rodar(
     cfg: Config, inicio: str, fim: str, ao_fechar: Callable[[str, dict], None] | None = None
 ) -> list[dict]:
     """O ciclo inteiro, mês a mês, decidindo as divergências pela regra automática. Serve
-    para ver tudo pronto com um comando."""
+    para ver tudo pronto com um comando. Mês já fechado é pulado, sem mexer em nada."""
     validar_mes(inicio)
     resumos = []
     with sessao(cfg) as conn:
         cadastro_service.preparar(conn, cfg)
         for mes in meses(inicio, fim):
+            if fechamento_service.mes_fechado(conn, mes):
+                resumo = {**fechamento_service.resumo_mes(conn, mes), "ja_fechado": True}
+                resumos.append(resumo)
+                if ao_fechar:
+                    ao_fechar(mes, resumo)
+                continue
             remessa_service.emitir_mes(conn, cfg, mes)
             simulador_service.simular_mes(conn, cfg, mes)
             importacao_service.importar_mes(conn, cfg, mes)

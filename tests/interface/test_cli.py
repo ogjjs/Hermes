@@ -96,3 +96,14 @@ def test_divergencias_lista_e_decidir_decide(conn, env_do_teste, capsys):
 def test_mes_invalido_vira_mensagem(env_do_teste, capsys):
     assert main(["--env", env_do_teste(), "emitir", "agosto"]) == 1
     assert "Mês inválido" in capsys.readouterr().err
+
+
+def test_rodar_de_novo_no_mesmo_banco_nao_mexe_no_que_ja_fechou(conn, env_do_teste, capsys):
+    env = env_do_teste()
+    assert main(["--env", env, "rodar", "2025-08", "2025-09"]) == 0
+    sql = "select divergencia_id, estado, decidida_em from hermes.divergencia order by 1"
+    antes = conn.execute(sql).fetchall()
+    conn.commit()
+    assert main(["--env", env, "rodar", "2025-08", "2025-09"]) == 0
+    assert conn.execute(sql).fetchall() == antes
+    assert "já fechado" in capsys.readouterr().out
